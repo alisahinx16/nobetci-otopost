@@ -1,4 +1,5 @@
 import io
+import os
 import re
 import requests
 import textwrap
@@ -10,24 +11,55 @@ from urllib.parse import urljoin
 st.set_page_config(page_title="Nöbetçi Gazete Post Robotu", page_icon="📰", layout="centered")
 
 # Sabitler
-STOP_WORDS = {"ve", "veya", "ama", "ile", "bir", "bu", "şu", "o", "için", "gibi", "de", "da", "ise", "ki", "en", "daha", "her", "çok"}
+STOP_WORDS = {
+    "ve", "veya", "ama", "ile", "bir", "bu", "şu", "o", "için", "gibi", "de", "da", "ise", "ki", 
+    "en", "daha", "her", "çok", "kendi", "biz", "siz", "onlar", "ben", "sen", "mi", "mı", "mu", "mü",
+    "olan", "olarak", "tarafından", "birlikte", "önce", "sonra", "karşı", "üzerine", "yeni",
+    "yok", "var", "hiç", "şimdi", "nasıl", "neden", "çünkü", "böyle", "şöyle", "artık", "zaman", "biri"
+}
 FAVICON_URL = "https://nobetcigazetecom.teimg.com/nobetcigazete-com/uploads/2025/08/favicon-nobetci-1.ico"
 
-# Güvenilir Cloudflare CDN üzerinden Roboto Fontları
+# Güvenilir Cloudflare CDN Font Bağlantıları
 FONT_BOLD_URL = "https://cdnjs.cloudflare.com/ajax/libs/roboto-fontface/0.10.0/fonts/roboto/Roboto-Bold.ttf"
 FONT_REG_URL = "https://cdnjs.cloudflare.com/ajax/libs/roboto-fontface/0.10.0/fonts/roboto/Roboto-Regular.ttf"
 
-# Yazı tipi indirme ve doğrulama fonksiyonu
+# Çift Aşamalı Güvenli Font Yükleyici
 @st.cache_data
-def get_font_bytes(url):
-    try:
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
-        response = requests.get(url, headers=headers, timeout=10)
-        if response.status_code == 200 and len(response.content) > 1000:
-            return response.content
-    except:
-        pass
-    return None
+def load_fonts():
+    fonts = {}
+    urls = {"bold": FONT_BOLD_URL, "regular": FONT_REG_URL}
+    
+    for key, url in urls.items():
+        # 1. Aşama: İnternetten Fontu Çekmeyi Dene
+        try:
+            headers = {'User-Agent': 'Mozilla/5.0'}
+            response = requests.get(url, headers=headers, timeout=10)
+            if response.status_code == 200 and len(response.content) > 10000:
+                fonts[key] = response.content
+                continue
+        except:
+            pass
+        
+        # 2. Aşama: Başarısız Olursa Linux Sunucusundaki Kurulu Fontları Ara (Garantili Çözüm)
+        local_paths = {
+            "bold": [
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+                "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"
+            ],
+            "regular": [
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+                "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"
+            ]
+        }
+        for path in local_paths[key]:
+            if os.path.exists(path):
+                try:
+                    with open(path, "rb") as f:
+                        fonts[key] = f.read()
+                        break
+                except:
+                    pass
+    return fonts
 
 st.title("📰 Nöbetçi Gazete Post Robotu")
 st.write("Web sitesi linkini girerek Instagram için 4:5 oranında tweet tasarımlı görsel ve metin özeti oluşturabilirsiniz.")
@@ -112,11 +144,11 @@ if st.button("Gönderi ve Özet Oluştur", type="primary"):
                         title_tag = soup.find('title')
                         title = title_tag.get_text().strip() if title_tag else "Başlık Bulunamadı"
                 
-                # --- AKILLI HABER GÖVDESİ (BODY) AYIKLAYICI ---
+                # --- AKILLI GÖVDE (BODY) METNİ BULUCU ---
                 best_container = None
                 max_chars = 0
                 
-                # 1. Aşama: Sık kullanılan standart haber container sınıfları taranır
+                # Sık kullanılan haber ana içerik sınıfları
                 selectors = [
                     'div.article-text', 'div.content-text', 'div.article-content',
                     'div[itemprop="articleBody"]', 'div.entry-content', 'article'
@@ -125,16 +157,16 @@ if st.button("Gönderi ve Özet Oluştur", type="primary"):
                     el = soup.select_one(sel)
                     if el:
                         p_text_len = sum(len(p.get_text().strip()) for p in el.find_all('p'))
-                        if p_text_len > 300: # Yeterli metin varsa kabul et
+                        if p_text_len > 300:
                             best_container = el
                             break
                 
-                # 2. Aşama: Eğer standart alanlar bulunamazsa Metin Yoğunluğu Analizi başlar
+                # Bulunamazsa Metin Yoğunluğu Analiz Algoritması
                 if not best_container:
                     for el in soup.find_all(['div', 'main', 'article']):
                         class_str = " ".join(el.get('class', [])).lower()
                         id_str = el.get('id', '').lower()
-                        # Menü, footer, reklam ve yan alanları ele
+                        # Menü, footer, reklam vb. alanları ele
                         if any(x in class_str or x in id_str for x in ['header', 'footer', 'menu', 'sidebar', 'nav', 'comment', 'ad-', 'widget']):
                             continue
                         
@@ -144,13 +176,13 @@ if st.button("Gönderi ve Özet Oluştur", type="primary"):
                             max_chars = char_count
                             best_container = el
 
-                # 3. Aşama: Paragrafların ayıklanması ve temizlenmesi
+                # Paragrafları ayıklama
                 if best_container:
                     paragraphs = [p.get_text().strip() for p in best_container.find_all('p') if len(p.get_text().strip()) > 45]
                 else:
                     paragraphs = [p.get_text().strip() for p in soup.find_all('p') if len(p.get_text().strip()) > 50]
                 
-                # Alakasız/çerez metinlerin elenmesi
+                # Alakasız/çerez metinlerin süzülmesi
                 clean_paragraphs = []
                 boilerplate_keywords = [
                     "çerez", "cookie", "politikası", "abone", "tıklayın", "tıklayınız", 
@@ -164,11 +196,11 @@ if st.button("Gönderi ve Özet Oluştur", type="primary"):
                         continue
                     clean_paragraphs.append(p)
                 
-                # En temiz ilk 3 gerçek haber paragrafını birleştirerek 5N1K özeti üretiyoruz
+                # En temiz ilk 3 gerçek paragraftan özgün özet metni oluşturma
                 real_paragraphs = clean_paragraphs[:3]
                 full_text = " ".join(real_paragraphs)
                 sentences = re.split(r'(?<=[.!?])\s+', full_text)
-                summary = " ".join(sentences[:4]) # İlk 4 temiz cümleyi alıyoruz
+                summary = " ".join(sentences[:4]) # İlk 4 temiz ve alakalı cümle
                 
                 if not summary.strip():
                     summary = "Haber gövde içeriği tespit edilemedi. Lütfen linki kontrol edin."
@@ -199,36 +231,33 @@ if st.button("Gönderi ve Özet Oluştur", type="primary"):
                 dim_overlay = Image.new("RGBA", post_img.size, (0, 0, 0, 80))
                 post_img = Image.alpha_composite(post_img.convert("RGBA"), dim_overlay).convert("RGB")
 
-                # Fontları Güvenli Şekilde Yükleme
-                bold_bytes = get_font_bytes(FONT_BOLD_URL)
-                reg_bytes = get_font_bytes(FONT_REG_URL)
+                # Fontları Çift Aşamalı Güvenli Fonksiyonla Yükleme
+                loaded_fonts = load_fonts()
+                bold_bytes = loaded_fonts.get("bold")
+                reg_bytes = loaded_fonts.get("regular")
 
-                # Harflerin çok küçük kalmaması için font boyutları ciddi oranda artırıldı
+                # Mobil Okunabilirlik İçin Ölçeklendirilmiş Büyük Font Boyutları
                 char_len = len(title)
                 if char_len > 110:
-                    font_size_val = 40 # En uzun başlıkta bile büyük ve okunabilir
+                    font_size_val = 40
                 elif char_len > 60:
                     font_size_val = 48
                 else:
-                    font_size_val = 56 # Kısa başlıklarda devasa ve dolgun
+                    font_size_val = 56
 
-                try:
-                    if bold_bytes and reg_bytes:
-                        font_title = ImageFont.truetype(io.BytesIO(bold_bytes), font_size_val)
-                        font_name = ImageFont.truetype(io.BytesIO(bold_bytes), 32)
-                        font_handle = ImageFont.truetype(io.BytesIO(reg_bytes), 26)
-                        font_stats = ImageFont.truetype(io.BytesIO(reg_bytes), 24)
-                    else:
-                        font_title = font_name = font_handle = font_stats = ImageFont.load_default()
-                except Exception:
+                if bold_bytes and reg_bytes:
+                    font_title = ImageFont.truetype(io.BytesIO(bold_bytes), font_size_val)
+                    font_name = ImageFont.truetype(io.BytesIO(bold_bytes), 32)
+                    font_handle = ImageFont.truetype(io.BytesIO(reg_bytes), 26)
+                    font_stats = ImageFont.truetype(io.BytesIO(reg_bytes), 24)
+                else:
                     font_title = font_name = font_handle = font_stats = ImageFont.load_default()
 
-                # Hassas sarma için ölçüm yüzeyi
+                # Hassas piksel sarma ölçüm yüzeyi
                 dummy_img = Image.new("RGB", (1, 1))
                 dummy_draw = ImageDraw.Draw(dummy_img)
 
-                # Kart genişliği 960px yapıldı (Kenar boşlukları daraltılarak enlemesine maksimum yayılım sağlandı).
-                # Kullanılabilir alan = 960px - 90px = 870px.
+                # Genişletilmiş kart yapısı (Yatayda 960px). Kullanılabilir alan = 870px.
                 wrapped_text = wrap_text_by_pixels(title, font_title, 870, dummy_draw)
                 
                 try:
@@ -238,16 +267,16 @@ if st.button("Gönderi ve Özet Oluştur", type="primary"):
                     num_lines = len(wrapped_text.split('\n'))
                     text_h = num_lines * (font_size_val + 18)
 
-                # Kart En Boy Ölçülerinin Yapılandırılması
+                # Kart En Boy Ölçüleri (Diklemesine de Metinle Tam Uyumlu)
                 card_w = 960
-                card_h = 160 + text_h + 120 # Diklemesine de metin boyutuna tam olarak duyarlı
+                card_h = 160 + text_h + 120
                 if card_h > 1080: card_h = 1080
                 elif card_h < 400: card_h = 400
 
                 card_x = (canvas_width - card_w) // 2
                 card_y = (canvas_height - card_h) // 2
 
-                # Okunabilirliği Artırmak İçin Kart Opaklığı %98'de (250/255)
+                # Okunabilirliği Artırmak İçin Kart Opaklığı %98'e (250/255) çıkarıldı
                 card_layer = Image.new("RGBA", post_img.size, (0, 0, 0, 0))
                 card_draw = ImageDraw.Draw(card_layer)
                 card_draw.rounded_rectangle([(card_x, card_y), (card_x + card_w, card_y + card_h)], radius=30, fill=(255, 255, 255, 250))
@@ -277,7 +306,7 @@ if st.button("Gönderi ve Özet Oluştur", type="primary"):
                 else:
                     draw.ellipse([(avatar_x, avatar_y), (avatar_x + avatar_diameter, avatar_y + avatar_diameter)], fill="#FF9800")
 
-                # Başlık Yazısı Tam Siyah (#050505) ve spacing=18 (Satır boşluğu) olarak güncellendi
+                # Metin Rengi tam siyah (#050505) ve Satır Aralığı 18px (Hassas Okunabilirlik)
                 draw.text((avatar_x + 95, avatar_y + 8), "Nöbetçi Gazete", font=font_name, fill="#0F1419")
                 draw.text((avatar_x + 95, avatar_y + 43), "@nobetcigazete", font=font_handle, fill="#536471")
                 draw.text((avatar_x, card_y + 160), wrapped_text, font=font_title, fill="#050505", spacing=18)
