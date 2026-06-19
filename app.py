@@ -112,48 +112,66 @@ if st.button("Gönderi ve Özet Oluştur", type="primary"):
                         title_tag = soup.find('title')
                         title = title_tag.get_text().strip() if title_tag else "Başlık Bulunamadı"
                 
-                # Akıllı Haber Özeti Ayıklayıcı (Scraper)
-                article_content_div = None
+                # --- AKILLI HABER GÖVDESİ (BODY) AYIKLAYICI ---
+                best_container = None
+                max_chars = 0
+                
+                # 1. Aşama: Sık kullanılan standart haber container sınıfları taranır
                 selectors = [
-                    'article', 'div.article-content', 'div.article-text', 
-                    'div.content-text', 'div.story-text', 'div.entry-content', 
-                    'div[itemprop="articleBody"]', 'div.story', 'div.post-content'
+                    'div.article-text', 'div.content-text', 'div.article-content',
+                    'div[itemprop="articleBody"]', 'div.entry-content', 'article'
                 ]
+                for sel in selectors:
+                    el = soup.select_one(sel)
+                    if el:
+                        p_text_len = sum(len(p.get_text().strip()) for p in el.find_all('p'))
+                        if p_text_len > 300: # Yeterli metin varsa kabul et
+                            best_container = el
+                            break
                 
-                for selector in selectors:
-                    article_content_div = soup.select_one(selector)
-                    if article_content_div:
-                        break
-                
-                if article_content_div:
-                    paragraphs = [p.get_text().strip() for p in article_content_div.find_all('p')]
+                # 2. Aşama: Eğer standart alanlar bulunamazsa Metin Yoğunluğu Analizi başlar
+                if not best_container:
+                    for el in soup.find_all(['div', 'main', 'article']):
+                        class_str = " ".join(el.get('class', [])).lower()
+                        id_str = el.get('id', '').lower()
+                        # Menü, footer, reklam ve yan alanları ele
+                        if any(x in class_str or x in id_str for x in ['header', 'footer', 'menu', 'sidebar', 'nav', 'comment', 'ad-', 'widget']):
+                            continue
+                        
+                        p_tags = el.find_all('p', recursive=False)
+                        char_count = sum(len(p.get_text().strip()) for p in p_tags if len(p.get_text().strip()) > 40)
+                        if char_count > max_chars:
+                            max_chars = char_count
+                            best_container = el
+
+                # 3. Aşama: Paragrafların ayıklanması ve temizlenmesi
+                if best_container:
+                    paragraphs = [p.get_text().strip() for p in best_container.find_all('p') if len(p.get_text().strip()) > 45]
                 else:
-                    paragraphs = [p.get_text().strip() for p in soup.find_all('p')]
+                    paragraphs = [p.get_text().strip() for p in soup.find_all('p') if len(p.get_text().strip()) > 50]
                 
-                # Çerez uyarısı, sosyal medya paylaşımları ve yazar biyografilerini süzme
+                # Alakasız/çerez metinlerin elenmesi
                 clean_paragraphs = []
                 boilerplate_keywords = [
                     "çerez", "cookie", "politikası", "abone", "tıklayın", "tıklayınız", 
                     "paylaş", "beğen", "yazar", "editör", "yayınlanma", "güncelleme", 
                     "tarafından", "hakkında", "tüm hakları", "yorumlar", "giriş yap", 
-                    "üye ol", "e-posta", "telefon", "reklam", "takip et"
+                    "üye ol", "e-posta", "telefon", "reklam", "takip et", "galerisi"
                 ]
                 
                 for p in paragraphs:
-                    if len(p) < 40: # Çok kısa satırları/paragrafları atla
-                        continue
                     if any(key in p.lower() for key in boilerplate_keywords):
                         continue
                     clean_paragraphs.append(p)
                 
-                # En temiz ilk 3 habere odaklı paragrafı birleştirerek gerçek özeti çıkarıyoruz
+                # En temiz ilk 3 gerçek haber paragrafını birleştirerek 5N1K özeti üretiyoruz
                 real_paragraphs = clean_paragraphs[:3]
                 full_text = " ".join(real_paragraphs)
                 sentences = re.split(r'(?<=[.!?])\s+', full_text)
                 summary = " ".join(sentences[:4]) # İlk 4 temiz cümleyi alıyoruz
                 
                 if not summary.strip():
-                    summary = "Haber içeriği kazınamadı veya temiz paragraf bulunamadı."
+                    summary = "Haber gövde içeriği tespit edilemedi. Lütfen linki kontrol edin."
                 
                 # Hashtags
                 hashtags = generate_hashtags(summary + " " + title)
@@ -185,13 +203,14 @@ if st.button("Gönderi ve Özet Oluştur", type="primary"):
                 bold_bytes = get_font_bytes(FONT_BOLD_URL)
                 reg_bytes = get_font_bytes(FONT_REG_URL)
 
+                # Harflerin çok küçük kalmaması için font boyutları ciddi oranda artırıldı
                 char_len = len(title)
-                if char_len > 120:
-                    font_size_val = 34
+                if char_len > 110:
+                    font_size_val = 40 # En uzun başlıkta bile büyük ve okunabilir
                 elif char_len > 60:
-                    font_size_val = 40
+                    font_size_val = 48
                 else:
-                    font_size_val = 46
+                    font_size_val = 56 # Kısa başlıklarda devasa ve dolgun
 
                 try:
                     if bold_bytes and reg_bytes:
@@ -204,12 +223,13 @@ if st.button("Gönderi ve Özet Oluştur", type="primary"):
                 except Exception:
                     font_title = font_name = font_handle = font_stats = ImageFont.load_default()
 
-                # Ölçüm ve Metin Sarma
+                # Hassas sarma için ölçüm yüzeyi
                 dummy_img = Image.new("RGB", (1, 1))
                 dummy_draw = ImageDraw.Draw(dummy_img)
 
-                # Kenar boşluklarına göre kullanılabilir alan 820px'tir.
-                wrapped_text = wrap_text_by_pixels(title, font_title, 820, dummy_draw)
+                # Kart genişliği 960px yapıldı (Kenar boşlukları daraltılarak enlemesine maksimum yayılım sağlandı).
+                # Kullanılabilir alan = 960px - 90px = 870px.
+                wrapped_text = wrap_text_by_pixels(title, font_title, 870, dummy_draw)
                 
                 try:
                     bbox = dummy_draw.textbbox((0, 0), wrapped_text, font=font_title, spacing=18)
@@ -218,16 +238,16 @@ if st.button("Gönderi ve Özet Oluştur", type="primary"):
                     num_lines = len(wrapped_text.split('\n'))
                     text_h = num_lines * (font_size_val + 18)
 
-                # Kart Yükseklik Hesabı
-                card_w = 920
-                card_h = 150 + text_h + 120
-                if card_h > 1050: card_h = 1050
+                # Kart En Boy Ölçülerinin Yapılandırılması
+                card_w = 960
+                card_h = 160 + text_h + 120 # Diklemesine de metin boyutuna tam olarak duyarlı
+                if card_h > 1080: card_h = 1080
                 elif card_h < 400: card_h = 400
 
                 card_x = (canvas_width - card_w) // 2
                 card_y = (canvas_height - card_h) // 2
 
-                # Okunabilirliği Artırmak İçin Kart Opaklığı %98'e (250/255) Çıkarıldı
+                # Okunabilirliği Artırmak İçin Kart Opaklığı %98'de (250/255)
                 card_layer = Image.new("RGBA", post_img.size, (0, 0, 0, 0))
                 card_draw = ImageDraw.Draw(card_layer)
                 card_draw.rounded_rectangle([(card_x, card_y), (card_x + card_w, card_y + card_h)], radius=30, fill=(255, 255, 255, 250))
@@ -260,7 +280,7 @@ if st.button("Gönderi ve Özet Oluştur", type="primary"):
                 # Başlık Yazısı Tam Siyah (#050505) ve spacing=18 (Satır boşluğu) olarak güncellendi
                 draw.text((avatar_x + 95, avatar_y + 8), "Nöbetçi Gazete", font=font_name, fill="#0F1419")
                 draw.text((avatar_x + 95, avatar_y + 43), "@nobetcigazete", font=font_handle, fill="#536471")
-                draw.text((avatar_x, card_y + 155), wrapped_text, font=font_title, fill="#050505", spacing=18)
+                draw.text((avatar_x, card_y + 160), wrapped_text, font=font_title, fill="#050505", spacing=18)
                 draw.text((avatar_x, card_y + card_h - 60), "💬 247      🔁 1.1K      ❤️ 4.8K      ✉️", font=font_stats, fill="#536471")
 
                 col1, col2 = st.columns([1, 1])
