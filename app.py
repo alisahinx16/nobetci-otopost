@@ -10,13 +10,16 @@ from urllib.parse import urljoin
 
 st.set_page_config(page_title="Nöbetçi Gazete Post Robotu", page_icon="📰", layout="centered")
 
-# Sabitler
-STOP_WORDS = {
-    "ve", "veya", "ama", "ile", "bir", "bu", "şu", "o", "için", "gibi", "de", "da", "ise", "ki", 
-    "en", "daha", "her", "çok", "kendi", "biz", "siz", "onlar", "ben", "sen", "mi", "mı", "mu", "mü",
-    "olan", "olarak", "tarafından", "birlikte", "önce", "sonra", "karşı", "üzerine", "yeni",
-    "yok", "var", "hiç", "şimdi", "nasıl", "neden", "çünkü", "böyle", "şöyle", "artık", "zaman", "biri"
+# Kapsamlı Türkçe Stop/Gereksiz Kelimeler ve Fiiller Listesi (Hashtag kalitesini korumak için)
+TURKISH_NOISE_WORDS = {
+    "yaptı", "etti", "oldu", "geldi", "gitti", "açıkladı", "konuştu", "başladı", "verdi", "aldı", 
+    "dedi", "göre", "karşı", "kadar", "üzere", "sonra", "önce", "tarafından", "büyük", "küçük", 
+    "yeni", "eski", "son", "dakika", "flaş", "sıcak", "haber", "haberi", "haberleri", "detaylar",
+    "hakkında", "tüm", "her", "bir", "bu", "şu", "o", "ve", "veya", "ama", "ile", "için", "gibi",
+    "de", "da", "ise", "ki", "en", "daha", "çok", "kendi", "biz", "siz", "onlar", "ben", "sen",
+    "mi", "mı", "mu", "mü", "olan", "olarak", "tarafından", "birlikte", "yok", "var", "hiç", "şimdi"
 }
+
 FAVICON_URL = "https://nobetcigazetecom.teimg.com/nobetcigazete-com/uploads/2025/08/favicon-nobetci-1.ico"
 LOGO_YATAY_URL = "https://nobetcigazetecom.teimg.com/nobetcigazete-com/uploads/2025/08/logolar/logo-yatay-2.png"
 
@@ -69,22 +72,40 @@ st.write("Web sitesi linkini girerek Instagram için 4:5 oranında kurumsal tasa
 
 url_input = st.text_input("Web Sayfası Linki:", placeholder="https://nobetcigazete.com/...")
 
-def generate_hashtags(text):
-    cleaned = re.sub(r'[^\w\s]', '', text.lower())
+# Filtreli ve Akıllı Anahtar Kelime / Popüler Hashtag Sistemi
+def generate_hashtags(title):
+    cleaned = re.sub(r'[^\w\s]', '', title.lower())
     words = cleaned.split()
-    meaningful_words = [w for w in words if len(w) > 3 and w not in STOP_WORDS]
-    freq = {}
-    for w in meaningful_words:
-        freq[w] = freq.get(w, 0) + 1
-    sorted_words = sorted(freq.items(), key=lambda x: x[1], reverse=True)
-    top_words = [w[0] for w in sorted_words[:5]]
     
-    fallbacks = ["güncel", "gününözeti", "keşfet", "sosyalmedya", "trend"]
-    while len(top_words) < 5:
-        candidate = fallbacks.pop(0)
-        if candidate not in top_words:
-            top_words.append(candidate)
-    return " ".join([f"#{w}" for w in top_words])
+    # 5 karakterden uzun, sayı içermeyen ve gereksiz kelimeler listesinde olmayan adayları ayıkla
+    candidates = []
+    for w in words:
+        if len(w) >= 5 and w not in TURKISH_NOISE_WORDS and not any(c.isdigit() for c in w):
+            candidates.append(w)
+            
+    # Frekans sayımı
+    freq = {}
+    for w in candidates:
+        freq[w] = freq.get(w, 0) + 1
+        
+    # Tekrar sayısına ve kelime uzunluğuna göre sırala (Uzun Türkçe kelimeler daha nitelikli isimlerdir)
+    sorted_candidates = sorted(freq.items(), key=lambda x: (x[1], len(x[0])), reverse=True)
+    top_keywords = [w[0] for w in sorted_candidates[:3]] # En kaliteli maksimum 3 kelimeyi al
+    
+    # Instagram algoritmasında etkileşimi en yüksek popüler haber hashtag'leri
+    popular_fallbacks = ["sondakika", "gündem", "nobetcigazete", "kesfet", "haber"]
+    
+    final_hashtags = []
+    for kw in top_keywords:
+        final_hashtags.append(f"#{kw}")
+        
+    for fb in popular_fallbacks:
+        if len(final_hashtags) >= 5:
+            break
+        if f"#{fb}" not in final_hashtags:
+            final_hashtags.append(f"#{fb}")
+            
+    return " ".join(final_hashtags)
 
 def find_image_url(soup, base_url):
     og_img = soup.find('meta', property='og:image')
@@ -97,6 +118,7 @@ def find_image_url(soup, base_url):
             return urljoin(base_url, src)
     return None
 
+# Piksel Tabanlı Hassas Metin Sarma Fonksiyonu
 def wrap_text_by_pixels(text, font, max_width, draw):
     paragraphs = text.split('\n')
     wrapped_paragraphs = []
@@ -147,10 +169,7 @@ if st.button("Gönderi ve Özet Oluştur", type="primary"):
                         title = title_tag.get_text().strip() if title_tag else "Başlık Bulunamadı"
                 
                 # --- AKILLI VE SIFIR HATALI ÖZET SİSTEMİ ---
-                # Hata ihtimalini sıfırlamak için özet metni doğrudan h2 başlığı olarak ayarlandı
                 summary = title
-                
-                # Hashtags (Doğrudan h2 metninden üretilir)
                 hashtags = generate_hashtags(summary)
                 img_url = find_image_url(soup, url_input)
                 
@@ -165,9 +184,10 @@ if st.button("Gönderi ve Özet Oluştur", type="primary"):
 
                 if bold_bytes and reg_bytes:
                     font_gundem = ImageFont.truetype(io.BytesIO(bold_bytes), 40)
-                    font_title = ImageFont.truetype(io.BytesIO(bold_bytes), 40)
+                    font_logo_bold = ImageFont.truetype(io.BytesIO(bold_bytes), 32)
+                    font_logo_reg = ImageFont.truetype(io.BytesIO(reg_bytes), 32)
                 else:
-                    font_gundem = font_title = ImageFont.load_default()
+                    font_gundem = font_logo_bold = font_logo_reg = ImageFont.load_default()
 
                 # --- 1. ÜST PANEL TASARIMI (Header) ---
                 # A) GÜNDEM Kategori Sekmesi (Sol Üst)
@@ -182,18 +202,16 @@ if st.button("Gönderi ve Özet Oluştur", type="primary"):
                 g_y = 80 + (100 - g_h) // 2 - 4
                 draw.text((g_x, g_y), gundem_text, font=font_gundem, fill="#0a2d6c")
 
-                # B) NÖBETÇİ GAZETE Yatay Logosu (Sağ Üst - Yazılar kaldırıldı, direkt görsel eklendi)
+                # B) NÖBETÇİ GAZETE Yatay Logosu (Sağ Üst)
                 logo_img = None
                 try:
                     logo_response = requests.get(LOGO_YATAY_URL, headers=headers, timeout=5)
                     if logo_response.status_code == 200 and len(logo_response.content) > 100:
                         raw_logo = Image.open(io.BytesIO(logo_response.content)).convert("RGBA")
                         
-                        # Logo yüksekliğini 85px olarak sabitleyip genişliğini oranlıyoruz
                         logo_h = 85
                         logo_w = int(raw_logo.size[0] * (logo_h / raw_logo.size[1]))
                         
-                        # Taşma kontrolü
                         if logo_w > 380:
                             logo_w = 380
                             logo_h = int(raw_logo.size[1] * (logo_w / raw_logo.size[0]))
@@ -203,7 +221,6 @@ if st.button("Gönderi ve Özet Oluştur", type="primary"):
                     pass
 
                 if logo_img:
-                    # Logoyu sağ marj olan 1010 piksele yaslayarak dikeyde tam ortalıyoruz
                     logo_x_pos = 1010 - logo_w
                     logo_y_pos = 80 + (100 - logo_h) // 2
                     post_img.paste(logo_img, (logo_x_pos, logo_y_pos), mask=logo_img.split()[3] if len(logo_img.split()) > 3 else None)
@@ -235,11 +252,40 @@ if st.button("Gönderi ve Özet Oluştur", type="primary"):
                 else:
                     draw.rounded_rectangle([(70, 200), (1010, 880)], radius=24, fill="#121212")
 
-                # --- 3. ALT METİN ALANI (Büyük ve Okunaklı Beyaz Yazı) ---
+                # --- 3. AKILLI YAZI ÖLÇEKLENDİRME DÖNGÜSÜ (Auto-Fit) ---
                 dummy_img = Image.new("RGB", (1, 1))
                 dummy_draw = ImageDraw.Draw(dummy_img)
-                
-                wrapped_text = wrap_text_by_pixels(title, font_title, 940, dummy_draw)
+
+                # Başlangıç yazı boyutu 44px olarak set edildi
+                font_size_val = 44
+                max_text_height = 330 # Alt alandaki güvenli dikey sınır (px)
+                wrapped_text = ""
+
+                # Metin dikey sınıra sığana kadar fontu otomatik olarak küçülten döngü
+                while font_size_val > 24:
+                    if bold_bytes:
+                        font_title = ImageFont.truetype(io.BytesIO(bold_bytes), font_size_val)
+                    else:
+                        font_title = ImageFont.load_default()
+                        break
+                    
+                    # Piksel tabanlı sarmayı çalıştır
+                    wrapped_text = wrap_text_by_pixels(title, font_title, 940, dummy_draw)
+                    
+                    try:
+                        bbox = dummy_draw.textbbox((0, 0), wrapped_text, font=font_title, spacing=18)
+                        text_h = bbox[3] - bbox[1]
+                    except:
+                        num_lines = len(wrapped_text.split('\n'))
+                        text_h = num_lines * (font_size_val + 18)
+                    
+                    # Eğer yükseklik sınıra sığıyorsa döngüden çık, sığmıyorsa yazı boyutunu 2px küçültüp tekrar dene
+                    if text_h <= max_text_height:
+                        break
+                    else:
+                        font_size_val -= 2
+
+                # --- 4. ALT METİN ALANI (Garantili Sığdırılmış Beyaz Yazı) ---
                 draw.text((70, 925), wrapped_text, font=font_title, fill="#ffffff", spacing=18)
 
                 col1, col2 = st.columns([1, 1])
