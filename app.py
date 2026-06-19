@@ -3,7 +3,7 @@ import re
 import requests
 import textwrap
 from bs4 import BeautifulSoup
-from PIL import Image, ImageDraw, ImageFont, ImageTk, ImageFilter
+from PIL import Image, ImageDraw, ImageFont, ImageFilter
 import streamlit as st
 from urllib.parse import urljoin
 
