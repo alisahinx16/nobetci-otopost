@@ -19,47 +19,52 @@ STOP_WORDS = {
 }
 FAVICON_URL = "https://nobetcigazetecom.teimg.com/nobetcigazete-com/uploads/2025/08/favicon-nobetci-1.ico"
 
-# Güvenilir Cloudflare CDN Font Bağlantıları
-FONT_BOLD_URL = "https://cdnjs.cloudflare.com/ajax/libs/roboto-fontface/0.10.0/fonts/roboto/Roboto-Bold.ttf"
-FONT_REG_URL = "https://cdnjs.cloudflare.com/ajax/libs/roboto-fontface/0.10.0/fonts/roboto/Roboto-Regular.ttf"
+# Güvenilir Direkt Raw GitHub Font Bağlantıları (Cloudflare korumasına takılmayan)
+FONT_BOLD_URL = "https://raw.githubusercontent.com/googlefonts/roboto/main/src/hinted/Roboto-Bold.ttf"
+FONT_REG_URL = "https://raw.githubusercontent.com/googlefonts/roboto/main/src/hinted/Roboto-Regular.ttf"
 
-# Çift Aşamalı Güvenli Font Yükleyici
+# Çift Aşamalı ve İşletim Sistemi Taramalı Garantili Font Yükleyici
 @st.cache_data
-def load_fonts():
-    fonts = {}
+def load_font_safely(font_type="bold"):
+    # 1. Aşama: Direkt Raw GitHub Adresinden İndirmeyi Dene
     urls = {"bold": FONT_BOLD_URL, "regular": FONT_REG_URL}
+    try:
+        headers = {'User-Agent': 'Mozilla/5.0'}
+        response = requests.get(urls[font_type], headers=headers, timeout=5)
+        if response.status_code == 200 and len(response.content) > 10000:
+            return response.content
+    except:
+        pass
+
+    # 2. Aşama: Başarısız Olursa Linux Sunucusundaki Türkçe Destekli Fontları Ara
+    search_dirs = ["/usr/share/fonts", "/usr/local/share/fonts", "/system/fonts"]
+    keywords = ["bold", "sans", "liberation", "dejavu", "arial"] if font_type == "bold" else ["regular", "sans", "liberation", "dejavu", "arial"]
     
-    for key, url in urls.items():
-        # 1. Aşama: İnternetten Fontu Çekmeyi Dene
-        try:
-            headers = {'User-Agent': 'Mozilla/5.0'}
-            response = requests.get(url, headers=headers, timeout=10)
-            if response.status_code == 200 and len(response.content) > 10000:
-                fonts[key] = response.content
-                continue
-        except:
-            pass
-        
-        # 2. Aşama: Başarısız Olursa Linux Sunucusundaki Kurulu Fontları Ara
-        local_paths = {
-            "bold": [
-                "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-                "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"
-            ],
-            "regular": [
-                "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-                "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"
-            ]
-        }
-        for path in local_paths[key]:
-            if os.path.exists(path):
-                try:
-                    with open(path, "rb") as f:
-                        fonts[key] = f.read()
-                        break
-                except:
-                    pass
-    return fonts
+    for d in search_dirs:
+        if os.path.exists(d):
+            for root, _, files in os.walk(d):
+                for f in files:
+                    if f.lower().endswith(".ttf"):
+                        f_lower = f.lower()
+                        if any(k in f_lower for k in keywords):
+                            try:
+                                with open(os.path.join(root, f), "rb") as font_file:
+                                    return font_file.read()
+                            except:
+                                pass
+
+    # 3. Aşama: Acil Durum Çıkışı - Sunucuda Bulunan Herhangi Bir TTF Fontunu Yükle (Mikroskobik fontu engellemek için)
+    for d in search_dirs:
+        if os.path.exists(d):
+            for root, _, files in os.walk(d):
+                for f in files:
+                    if f.lower().endswith(".ttf"):
+                        try:
+                            with open(os.path.join(root, f), "rb") as font_file:
+                                return font_file.read()
+                        except:
+                            pass
+    return None
 
 st.title("📰 Nöbetçi Gazete Post Robotu")
 st.write("Web sitesi linkini girerek Instagram için 4:5 oranında kurumsal tasarımlı görsel ve metin özeti oluşturabilirsiniz.")
@@ -94,7 +99,6 @@ def find_image_url(soup, base_url):
             return urljoin(base_url, src)
     return None
 
-# Piksel Tabanlı Hassas Metin Sarma Fonksiyonu
 def wrap_text_by_pixels(text, font, max_width, draw):
     paragraphs = text.split('\n')
     wrapped_paragraphs = []
@@ -205,34 +209,39 @@ if st.button("Gönderi ve Özet Oluştur", type="primary"):
                 
                 # --- GÖRSEL ŞABLON MOTORU (1080x1350 - 4:5) ---
                 canvas_width, canvas_height = 1080, 1350
-                # Arka Plan: Koyu Kurumsal Lacivert (#0a2d6c)
                 post_img = Image.new("RGB", (canvas_width, canvas_height), "#0a2d6c")
                 draw = ImageDraw.Draw(post_img)
 
-                # Fontları Yükleme
-                loaded_fonts = load_fonts()
-                bold_bytes = loaded_fonts.get("bold")
-                reg_bytes = loaded_fonts.get("regular")
+                # Yazı Tiplerinin Yüklenmesi (Garantili Akıllı Motor)
+                bold_bytes = load_font_safely("bold")
+                reg_bytes = load_font_safely("regular")
 
                 if bold_bytes and reg_bytes:
-                    font_gundem = ImageFont.truetype(io.BytesIO(bold_bytes), 44)
-                    font_title = ImageFont.truetype(io.BytesIO(reg_bytes), 38)
-                    font_logo_bold = ImageFont.truetype(io.BytesIO(bold_bytes), 34)
-                    font_logo_reg = ImageFont.truetype(io.BytesIO(reg_bytes), 34)
+                    font_gundem = ImageFont.truetype(io.BytesIO(bold_bytes), 40)
+                    font_title = ImageFont.truetype(io.BytesIO(bold_bytes), 40) # Başlık kalın ve net
+                    font_logo_bold = ImageFont.truetype(io.BytesIO(bold_bytes), 32)
+                    font_logo_reg = ImageFont.truetype(io.BytesIO(reg_bytes), 32)
                 else:
                     font_gundem = font_title = font_logo_bold = font_logo_reg = ImageFont.load_default()
 
                 # --- 1. ÜST PANEL TASARIMI (Header) ---
                 # A) GÜNDEM Kategori Sekmesi (Sol Üst)
-                # Kavisli yukarı köşeler için yuvarlatılmış dikdörtgen, alt kısmı düzlemek için ek kare çizimi
                 draw.rounded_rectangle([(70, 80), (450, 180)], radius=25, fill="#ffffff")
-                draw.rectangle([(70, 130), (450, 180)], fill="#ffffff") # Alt köşeleri kare yap
-                draw.text((155, 100), "GÜNDEM", font=font_gundem, fill="#0a2d6c")
+                draw.rectangle([(70, 130), (450, 180)], fill="#ffffff") # Alt köşeleri düzle
+                
+                # "GÜNDEM" yazısının beyaz sekme içinde dikey ve yatay tam ortalanması
+                gundem_text = "GÜNDEM"
+                g_bbox = draw.textbbox((0, 0), gundem_text, font=font_gundem)
+                g_w = g_bbox[2] - g_bbox[0]
+                g_h = g_bbox[3] - g_bbox[1]
+                g_x = 70 + (380 - g_w) // 2
+                g_y = 80 + (100 - g_h) // 2 - 4 # Optik dengeleme
+                draw.text((g_x, g_y), gundem_text, font=font_gundem, fill="#0a2d6c")
 
                 # B) NÖBETÇİ GAZETE Logosu (Sağ Üst)
-                logo_x = 730
-                logo_y = 82
-                avatar_diameter = 80
+                logo_x = 710
+                logo_y = 80
+                avatar_diameter = 84
                 avatar_img = None
 
                 try:
@@ -248,9 +257,9 @@ if st.button("Gönderi ve Özet Oluştur", type="primary"):
                 else:
                     draw.rectangle([(logo_x, logo_y), (logo_x + avatar_diameter, logo_y + avatar_diameter)], fill="#ffffff")
 
-                # Logo Yazısı (Logonun yanına hizalanmış dikey marka ismi)
-                draw.text((logo_x + 95, logo_y - 2), "nöbetçi", font=font_logo_bold, fill="#ffffff")
-                draw.text((logo_x + 95, logo_y + 36), "gazete", font=font_logo_reg, fill="#ffffff")
+                # Logo Yanındaki Yazılar
+                draw.text((logo_x + 100, logo_y + 2), "nöbetçi", font=font_logo_bold, fill="#ffffff")
+                draw.text((logo_x + 100, logo_y + 40), "gazete", font=font_logo_reg, fill="#ffffff")
 
                 # --- 2. ORTA HABER GÖRSELİ (940x680 - Yuvarlatılmış Köşeli) ---
                 if img_url:
@@ -267,32 +276,29 @@ if st.button("Gönderi ve Özet Oluştur", type="primary"):
                         y_offset = (resized_img.size[1] - 680) // 2
                         cropped_img = resized_img.crop((x_offset, y_offset, x_offset + 940, y_offset + 680))
                         
-                        # Köşe yuvarlama maskesi (Radius: 24)
+                        # Köşe yuvarlama (Radius: 24)
                         mask = Image.new("L", (940, 680), 0)
                         mask_draw = ImageDraw.Draw(mask)
                         mask_draw.rounded_rectangle([(0, 0), (940, 680)], radius=24, fill=255)
                         
-                        # Maskelenmiş resmi lacivert zemin üzerine yerleştirme
                         rounded_img = Image.new("RGBA", (940, 680), (0, 0, 0, 0))
                         rounded_img.paste(cropped_img.convert("RGBA"), (0, 0), mask=mask)
                         post_img.paste(rounded_img, (70, 200), mask=rounded_img.split()[3])
-                    except Exception as e:
-                        # Görsel yüklenemezse siyah çerçeve çiz
+                    except:
                         draw.rounded_rectangle([(70, 200), (1010, 880)], radius=24, fill="#121212")
                 else:
                     draw.rounded_rectangle([(70, 200), (1010, 880)], radius=24, fill="#121212")
 
-                # --- 3. ALT METİN ALANI (Okunaklı Beyaz Yazı) ---
+                # --- 3. ALT METİN ALANI (Büyük ve Okunaklı Beyaz Yazı) ---
                 dummy_img = Image.new("RGB", (1, 1))
                 dummy_draw = ImageDraw.Draw(dummy_img)
                 
-                # Sol marj: 70, Sağ marj: 1010. Net Genişlik = 940px
+                # Metnin sarılması (Sol marj: 70, Sağ marj: 1010. Genişlik = 940px)
                 wrapped_text = wrap_text_by_pixels(title, font_title, 940, dummy_draw)
                 
-                # Haber fotoğrafının altına (Y: 925px) beyaz renkli ve ferah satır aralıklı başlık yerleşimi
+                # Beyaz renkli, büyük (40px) ve Türkçe karakterleri tam destekleyen ana başlık
                 draw.text((70, 925), wrapped_text, font=font_title, fill="#ffffff", spacing=18)
 
-                # Streamlit Çıktı Arayüzü
                 col1, col2 = st.columns([1, 1])
                 
                 with col1:
