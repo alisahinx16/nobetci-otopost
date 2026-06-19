@@ -3,7 +3,7 @@ import re
 import requests
 import textwrap
 from bs4 import BeautifulSoup
-from PIL import Image, ImageDraw, ImageFont, ImageFilter
+from PIL import Image, ImageDraw, ImageFont, ImageTk, ImageFilter
 import streamlit as st
 from urllib.parse import urljoin
 
@@ -12,17 +12,22 @@ st.set_page_config(page_title="Nöbetçi Gazete Post Robotu", page_icon="📰", 
 # Sabitler
 STOP_WORDS = {"ve", "veya", "ama", "ile", "bir", "bu", "şu", "o", "için", "gibi", "de", "da", "ise", "ki", "en", "daha", "her", "çok"}
 FAVICON_URL = "https://nobetcigazetecom.teimg.com/nobetcigazete-com/uploads/2025/08/favicon-nobetci-1.ico"
-FONT_BOLD_URL = "https://github.com/google/fonts/raw/main/apache/roboto/Roboto-Bold.ttf"
-FONT_REG_URL = "https://github.com/google/fonts/raw/main/apache/roboto/Roboto-Regular.ttf"
 
-# Web sunucusunda yazı tipi hatası almamak için fontları internetten önbelleğe alarak çekiyoruz
+# Güvenilir Cloudflare CDN üzerinden Roboto Fontları
+FONT_BOLD_URL = "https://cdnjs.cloudflare.com/ajax/libs/roboto-fontface/0.10.0/fonts/roboto/Roboto-Bold.ttf"
+FONT_REG_URL = "https://cdnjs.cloudflare.com/ajax/libs/roboto-fontface/0.10.0/fonts/roboto/Roboto-Regular.ttf"
+
+# Yazı tipi indirme ve doğrulama fonksiyonu
 @st.cache_data
-def get_font(url):
+def get_font_bytes(url):
     try:
-        response = requests.get(url)
-        return io.BytesIO(response.content)
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+        response = requests.get(url, headers=headers, timeout=10)
+        if response.status_code == 200 and len(response.content) > 1000: # HTML hata sayfası olmaması için boyut kontrolü
+            return response.content
     except:
-        return None
+        pass
+    return None
 
 st.title("📰 Nöbetçi Gazete Post Robotu")
 st.write("Web sitesi linkini girerek Instagram için 4:5 oranında tweet tasarımlı görsel ve metin özeti oluşturabilirsiniz.")
@@ -63,7 +68,7 @@ if st.button("Gönderi ve Özet Oluştur", type="primary"):
     else:
         with st.spinner("Veriler çekiliyor ve görsel hazırlanıyor..."):
             try:
-                headers = {'User-Agent': 'Mozilla/5.0'}
+                headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
                 response = requests.get(url_input, headers=headers, timeout=10)
                 soup = BeautifulSoup(response.text, 'html.parser')
                 
@@ -111,9 +116,9 @@ if st.button("Gönderi ve Özet Oluştur", type="primary"):
                 dim_overlay = Image.new("RGBA", post_img.size, (0, 0, 0, 80))
                 post_img = Image.alpha_composite(post_img.convert("RGBA"), dim_overlay).convert("RGB")
 
-                # Fontları Çevrimdışı Bellekten Yükleme
-                bold_font_data = get_font(FONT_BOLD_URL)
-                reg_font_data = get_font(FONT_REG_URL)
+                # Fontları Güvenli Şekilde Yükleme (Hata durumunda default fontlara düşer)
+                bold_bytes = get_font_bytes(FONT_BOLD_URL)
+                reg_bytes = get_font_bytes(FONT_REG_URL)
 
                 char_len = len(title)
                 if char_len > 120:
@@ -123,18 +128,16 @@ if st.button("Gönderi ve Özet Oluştur", type="primary"):
                 else:
                     font_size_val, wrap_width = 46, 36
 
-                if bold_font_data and reg_font_data:
-                    # Bellekteki kopyaları sıfırlayarak yükleme yapıyoruz
-                    bold_font_data.seek(0)
-                    reg_font_data.seek(0)
-                    font_title = ImageFont.truetype(bold_font_data, font_size_val)
-                    bold_font_data.seek(0)
-                    font_name = ImageFont.truetype(bold_font_data, 32)
-                    reg_font_data.seek(0)
-                    font_handle = ImageFont.truetype(reg_font_data, 26)
-                    reg_font_data.seek(0)
-                    font_stats = ImageFont.truetype(reg_font_data, 24)
-                else:
+                # Hata Kafesi: Font yüklemesi çökerse sistem varsayılan fontuna geçilir
+                try:
+                    if bold_bytes and reg_bytes:
+                        font_title = ImageFont.truetype(io.BytesIO(bold_bytes), font_size_val)
+                        font_name = ImageFont.truetype(io.BytesIO(bold_bytes), 32)
+                        font_handle = ImageFont.truetype(io.BytesIO(reg_bytes), 26)
+                        font_stats = ImageFont.truetype(io.BytesIO(reg_bytes), 24)
+                    else:
+                        font_title = font_name = font_handle = font_stats = ImageFont.load_default()
+                except Exception:
                     font_title = font_name = font_handle = font_stats = ImageFont.load_default()
 
                 wrapped_text = textwrap.fill(title, width=wrap_width)
@@ -159,15 +162,17 @@ if st.button("Gönderi ve Özet Oluştur", type="primary"):
                 avatar_diameter = 74
                 avatar_img = None
 
+                # Favicon İndirme Koruma Kafesi
                 try:
                     fav_response = requests.get(FAVICON_URL, headers=headers, timeout=5)
-                    fav_img = Image.open(io.BytesIO(fav_response.content)).convert("RGBA")
-                    fav_img = fav_img.resize((avatar_diameter, avatar_diameter), Image.Resampling.LANCZOS)
-                    mask = Image.new("L", (avatar_diameter, avatar_diameter), 0)
-                    mask_draw = ImageDraw.Draw(mask)
-                    mask_draw.ellipse((0, 0, avatar_diameter, avatar_diameter), fill=255)
-                    avatar_img = Image.new("RGBA", (avatar_diameter, avatar_diameter), (0, 0, 0, 0))
-                    avatar_img.paste(fav_img, (0, 0), mask=mask)
+                    if fav_response.status_code == 200 and len(fav_response.content) > 100:
+                        fav_img = Image.open(io.BytesIO(fav_response.content)).convert("RGBA")
+                        fav_img = fav_img.resize((avatar_diameter, avatar_diameter), Image.Resampling.LANCZOS)
+                        mask = Image.new("L", (avatar_diameter, avatar_diameter), 0)
+                        mask_draw = ImageDraw.Draw(mask)
+                        mask_draw.ellipse((0, 0, avatar_diameter, avatar_diameter), fill=255)
+                        avatar_img = Image.new("RGBA", (avatar_diameter, avatar_diameter), (0, 0, 0, 0))
+                        avatar_img.paste(fav_img, (0, 0), mask=mask)
                 except:
                     pass
 
@@ -181,13 +186,12 @@ if st.button("Gönderi ve Özet Oluştur", type="primary"):
                 draw.text((avatar_x, card_y + 155), wrapped_text, font=font_title, fill="#0F1419", spacing=14)
                 draw.text((avatar_x, card_y + card_h - 60), "💬 247      🔁 1.1K      ❤️ 4.8K      ✉️", font=font_stats, fill="#536471")
 
-                # Web arayüzünde çıktıyı gösterme
                 col1, col2 = st.columns([1, 1])
                 
                 with col1:
                     st.image(post_img, caption="Oluşturulan Instagram Görseli (4:5)", use_container_width=True)
                     
-                    # Görsel İndirme Butonu
+                    # İndirme Butonu
                     img_byte_arr = io.BytesIO()
                     post_img.save(img_byte_arr, format='PNG')
                     img_byte_arr = img_byte_arr.getvalue()
