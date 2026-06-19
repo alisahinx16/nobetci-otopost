@@ -62,7 +62,7 @@ def load_fonts():
     return fonts
 
 st.title("📰 Nöbetçi Gazete Post Robotu")
-st.write("Web sitesi linkini girerek Instagram için 4:5 oranında tweet tasarımlı görsel ve metin özeti oluşturabilirsiniz.")
+st.write("Web sitesi linkini girerek Instagram için 4:5 oranında kurumsal tasarımlı görsel ve metin özeti oluşturabilirsiniz.")
 
 url_input = st.text_input("Web Sayfası Linki:", placeholder="https://nobetcigazete.com/...")
 
@@ -203,110 +203,96 @@ if st.button("Gönderi ve Özet Oluştur", type="primary"):
                 hashtags = generate_hashtags(summary + " " + title)
                 img_url = find_image_url(soup, url_input)
                 
-                # Görsel Motoru (Pillow)
+                # --- GÖRSEL ŞABLON MOTORU (1080x1350 - 4:5) ---
                 canvas_width, canvas_height = 1080, 1350
-                post_img = Image.new("RGB", (canvas_width, canvas_height), "#121212")
+                # Arka Plan: Koyu Kurumsal Lacivert (#0a2d6c)
+                post_img = Image.new("RGB", (canvas_width, canvas_height), "#0a2d6c")
+                draw = ImageDraw.Draw(post_img)
 
-                if img_url:
-                    try:
-                        img_data = requests.get(img_url, headers=headers, timeout=10).content
-                        web_img = Image.open(io.BytesIO(img_data)).convert("RGB")
-                        web_w, web_h = web_img.size
-                        ratio = max(canvas_width / web_w, canvas_height / web_h)
-                        new_size = (int(web_w * ratio), int(web_h * ratio))
-                        resized_img = web_img.resize(new_size, Image.Resampling.LANCZOS)
-                        x_offset = (resized_img.size[0] - canvas_width) // 2
-                        y_offset = (resized_img.size[1] - canvas_height) // 2
-                        post_img = resized_img.crop((x_offset, y_offset, x_offset + canvas_width, y_offset + canvas_height))
-                        post_img = post_img.filter(ImageFilter.GaussianBlur(4))
-                    except:
-                        pass
-
-                dim_overlay = Image.new("RGBA", post_img.size, (0, 0, 0, 80))
-                post_img = Image.alpha_composite(post_img.convert("RGBA"), dim_overlay).convert("RGB")
-
-                # Fontları Güvenli Şekilde Yükleme
+                # Fontları Yükleme
                 loaded_fonts = load_fonts()
                 bold_bytes = loaded_fonts.get("bold")
                 reg_bytes = loaded_fonts.get("regular")
 
-                # --- SABİT OKUNAKLI YAZI BOYUTU (46px) ---
-                font_size_val = 46
-
                 if bold_bytes and reg_bytes:
-                    font_title = ImageFont.truetype(io.BytesIO(bold_bytes), font_size_val)
-                    font_name = ImageFont.truetype(io.BytesIO(bold_bytes), 32)
-                    font_handle = ImageFont.truetype(io.BytesIO(reg_bytes), 26)
-                    font_stats = ImageFont.truetype(io.BytesIO(reg_bytes), 24)
+                    font_gundem = ImageFont.truetype(io.BytesIO(bold_bytes), 44)
+                    font_title = ImageFont.truetype(io.BytesIO(reg_bytes), 38)
+                    font_logo_bold = ImageFont.truetype(io.BytesIO(bold_bytes), 34)
+                    font_logo_reg = ImageFont.truetype(io.BytesIO(reg_bytes), 34)
                 else:
-                    font_title = font_name = font_handle = font_stats = ImageFont.load_default()
+                    font_gundem = font_title = font_logo_bold = font_logo_reg = ImageFont.load_default()
 
-                # Hassas piksel sarma ölçüm yüzeyi
-                dummy_img = Image.new("RGB", (1, 1))
-                dummy_draw = ImageDraw.Draw(dummy_img)
+                # --- 1. ÜST PANEL TASARIMI (Header) ---
+                # A) GÜNDEM Kategori Sekmesi (Sol Üst)
+                # Kavisli yukarı köşeler için yuvarlatılmış dikdörtgen, alt kısmı düzlemek için ek kare çizimi
+                draw.rounded_rectangle([(70, 80), (450, 180)], radius=25, fill="#ffffff")
+                draw.rectangle([(70, 130), (450, 180)], fill="#ffffff") # Alt köşeleri kare yap
+                draw.text((155, 100), "GÜNDEM", font=font_gundem, fill="#0a2d6c")
 
-                # Maksimum metin sarma sınırı 800px olarak sabitlendi
-                wrapped_text = wrap_text_by_pixels(title, font_title, 800, dummy_draw)
-                
-                # Metnin gerçek piksel boyutlarını ölçüyoruz
-                try:
-                    bbox = dummy_draw.textbbox((0, 0), wrapped_text, font=font_title, spacing=18)
-                    text_w = bbox[2] - bbox[0]
-                    text_h = bbox[3] - bbox[1]
-                except Exception:
-                    num_lines = len(wrapped_text.split('\n'))
-                    text_w = 600
-                    text_h = num_lines * (font_size_val + 18)
-
-                # --- ENDEN VE BOYDAN DİNAMİK KART BOYUTU HESAPLAMA ---
-                # Kart Genişliği: Metin genişliği + 100px (sağ-sol kenar payı). Minimum 580px, Maksimum 960px.
-                card_w = max(580, min(text_w + 100, 960))
-                
-                # Kart Yüksekliği: Üst alan (160px) + Metin dikey kaplaması + Alt alan (120px)
-                card_h = 160 + text_h + 120
-                if card_h > 1080: card_h = 1080
-                elif card_h < 420: card_h = 420
-
-                # Dinamik olarak kartın merkeze hizalanması
-                card_x = (canvas_width - card_w) // 2
-                card_y = (canvas_height - card_h) // 2
-
-                # Okunabilirliği Artırmak İçin Kart Opaklığı %98'de (250/255)
-                card_layer = Image.new("RGBA", post_img.size, (0, 0, 0, 0))
-                card_draw = ImageDraw.Draw(card_layer)
-                card_draw.rounded_rectangle([(card_x, card_y), (card_x + card_w, card_y + card_h)], radius=30, fill=(255, 255, 255, 250))
-                post_img = Image.alpha_composite(post_img.convert("RGBA"), card_layer).convert("RGB")
-
-                draw = ImageDraw.Draw(post_img)
-                avatar_x, avatar_y = card_x + 45, card_y + 45
-                avatar_diameter = 74
+                # B) NÖBETÇİ GAZETE Logosu (Sağ Üst)
+                logo_x = 730
+                logo_y = 82
+                avatar_diameter = 80
                 avatar_img = None
 
-                # Favicon
                 try:
                     fav_response = requests.get(FAVICON_URL, headers=headers, timeout=5)
                     if fav_response.status_code == 200 and len(fav_response.content) > 100:
                         fav_img = Image.open(io.BytesIO(fav_response.content)).convert("RGBA")
-                        fav_img = fav_img.resize((avatar_diameter, avatar_diameter), Image.Resampling.LANCZOS)
-                        mask = Image.new("L", (avatar_diameter, avatar_diameter), 0)
-                        mask_draw = ImageDraw.Draw(mask)
-                        mask_draw.ellipse((0, 0, avatar_diameter, avatar_diameter), fill=255)
-                        avatar_img = Image.new("RGBA", (avatar_diameter, avatar_diameter), (0, 0, 0, 0))
-                        avatar_img.paste(fav_img, (0, 0), mask=mask)
+                        avatar_img = fav_img.resize((avatar_diameter, avatar_diameter), Image.Resampling.LANCZOS)
                 except:
                     pass
 
                 if avatar_img:
-                    post_img.paste(avatar_img, (avatar_x, avatar_y), mask=avatar_img.split()[3])
+                    post_img.paste(avatar_img, (logo_x, logo_y), mask=avatar_img.split()[3] if len(avatar_img.split()) > 3 else None)
                 else:
-                    draw.ellipse([(avatar_x, avatar_y), (avatar_x + avatar_diameter, avatar_y + avatar_diameter)], fill="#FF9800")
+                    draw.rectangle([(logo_x, logo_y), (logo_x + avatar_diameter, logo_y + avatar_diameter)], fill="#ffffff")
 
-                # Yazıların yerleşimi kartın yeni dinamik koordinatlarına (avatar_x, card_y) bağlandı
-                draw.text((avatar_x + 95, avatar_y + 8), "Nöbetçi Gazete", font=font_name, fill="#0F1419")
-                draw.text((avatar_x + 95, avatar_y + 43), "@nobetcigazete", font=font_handle, fill="#536471")
-                draw.text((avatar_x, card_y + 160), wrapped_text, font=font_title, fill="#050505", spacing=18)
-                draw.text((avatar_x, card_y + card_h - 60), "💬 247      🔁 1.1K      ❤️ 4.8K      ✉️", font=font_stats, fill="#536471")
+                # Logo Yazısı (Logonun yanına hizalanmış dikey marka ismi)
+                draw.text((logo_x + 95, logo_y - 2), "nöbetçi", font=font_logo_bold, fill="#ffffff")
+                draw.text((logo_x + 95, logo_y + 36), "gazete", font=font_logo_reg, fill="#ffffff")
 
+                # --- 2. ORTA HABER GÖRSELİ (940x680 - Yuvarlatılmış Köşeli) ---
+                if img_url:
+                    try:
+                        img_data = requests.get(img_url, headers=headers, timeout=10).content
+                        web_img = Image.open(io.BytesIO(img_data)).convert("RGB")
+                        
+                        web_w, web_h = web_img.size
+                        ratio = max(940 / web_w, 680 / web_h)
+                        new_size = (int(web_w * ratio), int(web_h * ratio))
+                        resized_img = web_img.resize(new_size, Image.Resampling.LANCZOS)
+                        
+                        x_offset = (resized_img.size[0] - 940) // 2
+                        y_offset = (resized_img.size[1] - 680) // 2
+                        cropped_img = resized_img.crop((x_offset, y_offset, x_offset + 940, y_offset + 680))
+                        
+                        # Köşe yuvarlama maskesi (Radius: 24)
+                        mask = Image.new("L", (940, 680), 0)
+                        mask_draw = ImageDraw.Draw(mask)
+                        mask_draw.rounded_rectangle([(0, 0), (940, 680)], radius=24, fill=255)
+                        
+                        # Maskelenmiş resmi lacivert zemin üzerine yerleştirme
+                        rounded_img = Image.new("RGBA", (940, 680), (0, 0, 0, 0))
+                        rounded_img.paste(cropped_img.convert("RGBA"), (0, 0), mask=mask)
+                        post_img.paste(rounded_img, (70, 200), mask=rounded_img.split()[3])
+                    except Exception as e:
+                        # Görsel yüklenemezse siyah çerçeve çiz
+                        draw.rounded_rectangle([(70, 200), (1010, 880)], radius=24, fill="#121212")
+                else:
+                    draw.rounded_rectangle([(70, 200), (1010, 880)], radius=24, fill="#121212")
+
+                # --- 3. ALT METİN ALANI (Okunaklı Beyaz Yazı) ---
+                dummy_img = Image.new("RGB", (1, 1))
+                dummy_draw = ImageDraw.Draw(dummy_img)
+                
+                # Sol marj: 70, Sağ marj: 1010. Net Genişlik = 940px
+                wrapped_text = wrap_text_by_pixels(title, font_title, 940, dummy_draw)
+                
+                # Haber fotoğrafının altına (Y: 925px) beyaz renkli ve ferah satır aralıklı başlık yerleşimi
+                draw.text((70, 925), wrapped_text, font=font_title, fill="#ffffff", spacing=18)
+
+                # Streamlit Çıktı Arayüzü
                 col1, col2 = st.columns([1, 1])
                 
                 with col1:
