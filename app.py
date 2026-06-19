@@ -23,7 +23,7 @@ def get_font_bytes(url):
     try:
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
         response = requests.get(url, headers=headers, timeout=10)
-        if response.status_code == 200 and len(response.content) > 1000: # HTML hata sayfası olmaması için boyut kontrolü
+        if response.status_code == 200 and len(response.content) > 1000:
             return response.content
     except:
         pass
@@ -61,6 +61,34 @@ def find_image_url(soup, base_url):
         if src and not src.endswith('.svg') and not 'logo' in src.lower():
             return urljoin(base_url, src)
     return None
+
+# Piksel Tabanlı Hassas Metin Sarma Fonksiyonu
+def wrap_text_by_pixels(text, font, max_width, draw):
+    paragraphs = text.split('\n')
+    wrapped_paragraphs = []
+    for paragraph in paragraphs:
+        words = paragraph.split()
+        if not words:
+            wrapped_paragraphs.append("")
+            continue
+        lines = []
+        current_line = []
+        for word in words:
+            test_line = " ".join(current_line + [word]) if current_line else word
+            bbox = draw.textbbox((0, 0), test_line, font=font)
+            line_w = bbox[2] - bbox[0]
+            if line_w <= max_width:
+                current_line.append(word)
+            else:
+                if current_line:
+                    lines.append(" ".join(current_line))
+                    current_line = [word]
+                else:
+                    lines.append(word)
+        if current_line:
+            lines.append(" ".join(current_line))
+        wrapped_paragraphs.append("\n".join(lines))
+    return "\n".join(wrapped_paragraphs)
 
 if st.button("Gönderi ve Özet Oluştur", type="primary"):
     if not url_input:
@@ -116,19 +144,18 @@ if st.button("Gönderi ve Özet Oluştur", type="primary"):
                 dim_overlay = Image.new("RGBA", post_img.size, (0, 0, 0, 80))
                 post_img = Image.alpha_composite(post_img.convert("RGBA"), dim_overlay).convert("RGB")
 
-                # Fontları Güvenli Şekilde Yükleme (Hata durumunda default fontlara düşer)
+                # Fontları Güvenli Şekilde Yükleme
                 bold_bytes = get_font_bytes(FONT_BOLD_URL)
                 reg_bytes = get_font_bytes(FONT_REG_URL)
 
                 char_len = len(title)
                 if char_len > 120:
-                    font_size_val, wrap_width = 34, 50
+                    font_size_val = 34
                 elif char_len > 60:
-                    font_size_val, wrap_width = 40, 42
+                    font_size_val = 40
                 else:
-                    font_size_val, wrap_width = 46, 36
+                    font_size_val = 46
 
-                # Hata Kafesi: Font yüklemesi çökerse sistem varsayılan fontuna geçilir
                 try:
                     if bold_bytes and reg_bytes:
                         font_title = ImageFont.truetype(io.BytesIO(bold_bytes), font_size_val)
@@ -140,18 +167,32 @@ if st.button("Gönderi ve Özet Oluştur", type="primary"):
                 except Exception:
                     font_title = font_name = font_handle = font_stats = ImageFont.load_default()
 
-                wrapped_text = textwrap.fill(title, width=wrap_width)
-                num_lines = len(wrapped_text.split('\n'))
-                estimated_text_h = num_lines * (font_size_val + 14)
+                # Hassas sarma için sanal bir ölçüm yüzeyi oluşturuyoruz
+                dummy_img = Image.new("RGB", (1, 1))
+                dummy_draw = ImageDraw.Draw(dummy_img)
+
+                # Kart genişliği 920px. Kenar boşlukları 45px sol, 45px sağ. Kullanılabilir alan = 830px.
+                # Emniyet payı ile metin sarma piksel sınırını 810px olarak veriyoruz.
+                wrapped_text = wrap_text_by_pixels(title, font_title, 810, dummy_draw)
                 
+                # Sarılmış metnin net piksel yüksekliğini ölçüyoruz
+                try:
+                    bbox = dummy_draw.textbbox((0, 0), wrapped_text, font=font_title, spacing=14)
+                    text_h = bbox[3] - bbox[1]
+                except Exception:
+                    num_lines = len(wrapped_text.split('\n'))
+                    text_h = num_lines * (font_size_val + 14)
+
+                # Kart Yüksekliği Hesaplama
                 card_w = 920
-                card_h = 150 + estimated_text_h + 120
+                card_h = 150 + text_h + 120
                 if card_h > 1050: card_h = 1050
                 elif card_h < 400: card_h = 400
 
                 card_x = (canvas_width - card_w) // 2
                 card_y = (canvas_height - card_h) // 2
 
+                # %90 Opaklığa sahip Beyaz Kart Katmanı
                 card_layer = Image.new("RGBA", post_img.size, (0, 0, 0, 0))
                 card_draw = ImageDraw.Draw(card_layer)
                 card_draw.rounded_rectangle([(card_x, card_y), (card_x + card_w, card_y + card_h)], radius=30, fill=(255, 255, 255, 230))
@@ -162,7 +203,7 @@ if st.button("Gönderi ve Özet Oluştur", type="primary"):
                 avatar_diameter = 74
                 avatar_img = None
 
-                # Favicon İndirme Koruma Kafesi
+                # Favicon Çekimi
                 try:
                     fav_response = requests.get(FAVICON_URL, headers=headers, timeout=5)
                     if fav_response.status_code == 200 and len(fav_response.content) > 100:
@@ -183,7 +224,10 @@ if st.button("Gönderi ve Özet Oluştur", type="primary"):
 
                 draw.text((avatar_x + 95, avatar_y + 8), "Nöbetçi Gazete", font=font_name, fill="#0F1419")
                 draw.text((avatar_x + 95, avatar_y + 43), "@nobetcigazete", font=font_handle, fill="#536471")
+                
+                # Metni tam olarak sol hizadan, optimum yayılımla çizme
                 draw.text((avatar_x, card_y + 155), wrapped_text, font=font_title, fill="#0F1419", spacing=14)
+                
                 draw.text((avatar_x, card_y + card_h - 60), "💬 247      🔁 1.1K      ❤️ 4.8K      ✉️", font=font_stats, fill="#536471")
 
                 col1, col2 = st.columns([1, 1])
